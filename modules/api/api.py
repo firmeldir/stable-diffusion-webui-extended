@@ -334,10 +334,12 @@ class Api:
         send_images = args.pop('send_images', True)
         args.pop('save_images', None)
 
+        model_id = args["model_id"]
+        args.pop('model_id', None)
+
         with self.queue_lock:
 
             # load model
-            model_id = args["model_id"]
             cwd = os.getcwd()
             model_location = f"models/Stable-diffusion/{model_id}.safetensors"
 
