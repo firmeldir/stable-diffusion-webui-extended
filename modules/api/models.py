@@ -103,8 +103,6 @@ StableDiffusionTmplt2ImgProcessingAPI = PydanticModelGenerator(
     StableDiffusionProcessingTxt2Img,
     [
         {"key": "model_id", "type": str, "default": None},
-        {"key": "template_name", "type": str, "default": None},
-
         {"key": "sampler_index", "type": str, "default": "Euler"},
         {"key": "script_name", "type": str, "default": None},
         {"key": "script_args", "type": list, "default": []},
