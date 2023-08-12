@@ -337,6 +337,8 @@ class Api:
         model_id = args["model_id"]
         args.pop('model_id', None)
 
+        print(f"Inside tmplt2img with {model_id}")
+
         with self.queue_lock:
 
             # load model
