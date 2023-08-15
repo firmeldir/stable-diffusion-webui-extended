@@ -341,13 +341,10 @@ class Api:
         args.pop('model_id', None)
 
         with self.queue_lock:
-
-            # load model
+            # Load model
             cwd = os.getcwd()
             model_location = f"models/Stable-diffusion/{model_id}.safetensors"
-
             logger.info(f"| tmplt2img#1 | Trying to get {cwd}/{model_location}")
-
             if not os.path.exists(f"{cwd}/{model_location}"):
                 hdd = psutil.disk_usage(os.getcwd())
                 logger.info(f"| tmplt2img#2 | No file, {(hdd.free // (2**30))}GiB of free space")
@@ -367,6 +364,8 @@ class Api:
                     Key=f"{model_id}/{model_id}.safetensors",
                     Filename=model_location
                 )
+                # Refresh after loaded
+                shared.refresh_checkpoints()
 
             with closing(StableDiffusionProcessingTxt2Img(sd_model=shared.sd_model, **args)) as p:
                 p.scripts = script_runner
