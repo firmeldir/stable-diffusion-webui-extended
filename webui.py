@@ -18,6 +18,15 @@ from packaging import version
 
 import logging
 
+# Extended logs
+logger = logging.getLogger('extended')
+logger.setLevel(logging.INFO)
+fh = logging.FileHandler('extended.log')
+fh.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s | %(levelname)s')
+fh.setFormatter(formatter)
+logger.addHandler(fh)
+
 # We can't use cmd_opts for this because it will not have been initialized at this point.
 log_level = os.environ.get("SD_WEBUI_LOG_LEVEL")
 if log_level:

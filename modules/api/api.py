@@ -307,6 +307,9 @@ class Api:
         return script_args
 
     def tmplt2img(self, tmplt2imgreq: models.StableDiffusionTmplt2ImgProcessingAPI):
+        import logging
+        logger = logging.getLogger('extended')
+
         script_runner = scripts.scripts_txt2img
         if not script_runner.scripts:
             script_runner.initialize_scripts(False)
@@ -337,27 +340,28 @@ class Api:
         model_id = args["model_id"]
         args.pop('model_id', None)
 
-        print(f"Inside tmplt2img with {model_id}")
-
         with self.queue_lock:
 
             # load model
             cwd = os.getcwd()
             model_location = f"models/Stable-diffusion/{model_id}.safetensors"
 
+            logger.info(f"| tmplt2img#1 | Trying to get {cwd}/{model_location}")
+
             if not os.path.exists(f"{cwd}/{model_location}"):
                 hdd = psutil.disk_usage(os.getcwd())
+                logger.info(f"| tmplt2img#2 | No file, {(hdd.free // (2**30))}GiB of free space")
                 while (hdd.free // (2**30)) < 10:
-                    print(f"Freeing space until get free 10GiB.")
                     files = os.listdir(f"{cwd}/models/Stable-diffusion/")
                     files = filter(lambda x: x.endswith(".safetensors"), files)
                     abs_files = [f"{0}/models/Stable-diffusion/{1}".format(cwd, x) for x in files]
                     oldest_file = min(abs_files, key=os.path.getctime)
+                    logger.info(f"| tmplt2img#3 | Cleaning memory, deleting {os.path.abspath(oldest_file)}")
                     os.remove(os.path.abspath(oldest_file))
                     hdd = psutil.disk_usage(os.getcwd())
 
-                print(f"Loading {model_id}/{model_id}.safetensors.")
                 s3 = boto3.client('s3', aws_access_key_id="AKIAVTHC7LW5M56AJ5FV", aws_secret_access_key="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")
+                logger.info(f"| tmplt2img#4 | Downloading from {model_id}/{model_id}.safetensors")
                 s3.download_file(
                     Bucket='stable-diffusion-trainings',
                     Key=f"{model_id}/{model_id}.safetensors",
