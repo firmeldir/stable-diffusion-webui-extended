@@ -98,20 +98,6 @@ class PydanticModelGenerator:
         DynamicModel.__config__.allow_mutation = True
         return DynamicModel
 
-StableDiffusionTmplt2ImgProcessingAPI = PydanticModelGenerator(
-    "StableDiffusionProcessingTmplt2Img",
-    StableDiffusionProcessingTxt2Img,
-    [
-        {"key": "model_id", "type": str, "default": None},
-        {"key": "sampler_index", "type": str, "default": "Euler"},
-        {"key": "script_name", "type": str, "default": None},
-        {"key": "script_args", "type": list, "default": []},
-        {"key": "send_images", "type": bool, "default": True},
-        {"key": "save_images", "type": bool, "default": False},
-        {"key": "alwayson_scripts", "type": dict, "default": {}},
-    ]
-).generate_model()
-
 StableDiffusionTxt2ImgProcessingAPI = PydanticModelGenerator(
     "StableDiffusionProcessingTxt2Img",
     StableDiffusionProcessingTxt2Img,

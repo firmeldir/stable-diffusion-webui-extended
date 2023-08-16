@@ -36,7 +36,14 @@ from contextlib import closing
 import boto3
 import psutil
 import os
+import threading as th
 
+import logging
+logger = logging.getLogger('extended')
+
+def terminate():
+    logger.info(f":: terminate :: Terminating a pod")
+    os.system("runpodctl remove pod $RUNPOD_POD_ID")
 
 def script_name_to_index(name, scripts):
     try:
@@ -100,7 +107,6 @@ def encode_pil_to_base64(image):
         bytes_data = output_bytes.getvalue()
 
     return base64.b64encode(bytes_data)
-
 
 def api_middleware(app: FastAPI):
     rich_available = False
@@ -167,6 +173,7 @@ def api_middleware(app: FastAPI):
 
 
 class Api:
+
     def __init__(self, app: FastAPI, queue_lock: Lock):
         if shared.cmd_opts.api_auth:
             self.credentials = {}
@@ -212,8 +219,6 @@ class Api:
         self.add_api_route("/sdapi/v1/scripts", self.get_scripts_list, methods=["GET"], response_model=models.ScriptsList)
         self.add_api_route("/sdapi/v1/script-info", self.get_script_info, methods=["GET"], response_model=List[models.ScriptInfo])
 
-        self.add_api_route("/sdeapi/v1/tmplt2img", self.tmplt2img, methods=["POST"], response_model=models.TextToImageResponse)
-
         if shared.cmd_opts.api_server_stop:
             self.add_api_route("/sdapi/v1/server-kill", self.kill_webui, methods=["POST"])
             self.add_api_route("/sdapi/v1/server-restart", self.restart_webui, methods=["POST"])
@@ -221,6 +226,9 @@ class Api:
 
         self.default_script_arg_txt2img = []
         self.default_script_arg_img2img = []
+
+        self.timer = th.Timer(60.0 * 60, terminate)
+        self.timer.start()
 
     def add_api_route(self, path: str, endpoint, **kwargs):
         if shared.cmd_opts.api_auth:
@@ -306,88 +314,8 @@ class Api:
                         script_args[alwayson_script.args_from + idx] = request.alwayson_scripts[alwayson_script_name]["args"][idx]
         return script_args
 
-    def tmplt2img(self, tmplt2imgreq: models.StableDiffusionTmplt2ImgProcessingAPI):
-        import logging
-        logger = logging.getLogger('extended')
-
-        script_runner = scripts.scripts_txt2img
-        if not script_runner.scripts:
-            script_runner.initialize_scripts(False)
-            ui.create_ui()
-        if not self.default_script_arg_txt2img:
-            self.default_script_arg_txt2img = self.init_default_script_args(script_runner)
-        selectable_scripts, selectable_script_idx = self.get_selectable_script(tmplt2imgreq.script_name, script_runner)
-
-        populate = tmplt2imgreq.copy(update={  # Override __init__ params
-            "sampler_name": validate_sampler_name(tmplt2imgreq.sampler_name or tmplt2imgreq.sampler_index),
-            "do_not_save_samples": not tmplt2imgreq.save_images,
-            "do_not_save_grid": not tmplt2imgreq.save_images,
-        })
-        if populate.sampler_name:
-            populate.sampler_index = None  # prevent a warning later on
-
-        args = vars(populate)
-        args.pop('script_name', None)
-        args.pop('script_args', None)  # will refeed them to the pipeline directly after initializing them
-        args.pop('alwayson_scripts', None)
-
-        script_args = self.init_script_args(tmplt2imgreq, self.default_script_arg_txt2img, selectable_scripts,
-                                            selectable_script_idx, script_runner)
-
-        send_images = args.pop('send_images', True)
-        args.pop('save_images', None)
-
-        model_id = args["model_id"]
-        args.pop('model_id', None)
-
-        with self.queue_lock:
-            # Load model
-            cwd = os.getcwd()
-            model_location = f"models/Stable-diffusion/{model_id}.safetensors"
-            logger.info(f"| tmplt2img#1 | Trying to get {cwd}/{model_location}")
-            if not os.path.exists(f"{cwd}/{model_location}"):
-                hdd = psutil.disk_usage(os.getcwd())
-                logger.info(f"| tmplt2img#2 | No file, {(hdd.free // (2**30))}GiB of free space")
-                while (hdd.free // (2**30)) < 10:
-                    files = os.listdir(f"{cwd}/models/Stable-diffusion/")
-                    files = filter(lambda x: x.endswith(".safetensors"), files)
-                    abs_files = [f"{0}/models/Stable-diffusion/{1}".format(cwd, x) for x in files]
-                    oldest_file = min(abs_files, key=os.path.getctime)
-                    logger.info(f"| tmplt2img#3 | Cleaning memory, deleting {os.path.abspath(oldest_file)}")
-                    os.remove(os.path.abspath(oldest_file))
-                    hdd = psutil.disk_usage(os.getcwd())
-
-                s3 = boto3.client('s3', aws_access_key_id="AKIAVTHC7LW5M56AJ5FV", aws_secret_access_key="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")
-                logger.info(f"| tmplt2img#4 | Downloading from {model_id}/{model_id}.safetensors")
-                s3.download_file(
-                    Bucket='stable-diffusion-trainings',
-                    Key=f"{model_id}/{model_id}.safetensors",
-                    Filename=model_location
-                )
-                # Refresh after loaded
-                shared.refresh_checkpoints()
-
-            with closing(StableDiffusionProcessingTxt2Img(sd_model=shared.sd_model, **args)) as p:
-                p.scripts = script_runner
-                p.outpath_grids = opts.outdir_txt2img_grids
-                p.outpath_samples = opts.outdir_txt2img_samples
-
-                try:
-                    shared.state.begin(job="scripts_txt2img")
-                    if selectable_scripts is not None:
-                        p.script_args = script_args
-                        processed = scripts.scripts_txt2img.run(p, *p.script_args)  # Need to pass args as list here
-                    else:
-                        p.script_args = tuple(script_args)  # Need to pass args as tuple here
-                        processed = process_images(p)
-                finally:
-                    shared.state.end()
-
-        b64images = list(map(encode_pil_to_base64, processed.images)) if send_images else []
-
-        return models.TextToImageResponse(images=b64images, parameters=vars(tmplt2imgreq), info=processed.js())
-
     def text2imgapi(self, txt2imgreq: models.StableDiffusionTxt2ImgProcessingAPI):
+
         script_runner = scripts.scripts_txt2img
         if not script_runner.scripts:
             script_runner.initialize_scripts(False)
@@ -414,7 +342,42 @@ class Api:
         send_images = args.pop('send_images', True)
         args.pop('save_images', None)
 
+        model_id = args['override_settings']['sd_model_checkpoint'].split('.')[0]
+
         with self.queue_lock:
+            self.timer.cancel()
+            self.timer = th.Timer(60.0 * 60, terminate)
+            self.timer.start()
+
+            # Load model
+            cwd = os.getcwd()
+            model_location = f"models/Stable-diffusion/{model_id}.safetensors"
+            logger.info(f":: text2imgapi :: Trying to get {cwd}/{model_location}")
+            if not os.path.exists(f"{cwd}/{model_location}"):
+                hdd = psutil.disk_usage(os.getcwd())
+                logger.info(f":: text2imgapi :: No file, {(hdd.free // (2 ** 30))}GiB of free space")
+                while (hdd.free // (2 ** 30)) < 10:
+                    files = os.listdir(f"{cwd}/models/Stable-diffusion/")
+                    #files = filter(lambda x: x.endswith(".safetensors"), files)
+                    abs_files = [f"{cwd}/models/Stable-diffusion/{x}" for x in files]
+                    oldest_file = min(abs_files, key=os.path.getctime)
+                    logger.info(f":: text2imgapi :: Cleaning memory, deleting {os.path.abspath(oldest_file)}")
+                    os.remove(os.path.abspath(oldest_file))
+                    time.sleep(1)
+                    hdd = psutil.disk_usage(os.getcwd())
+                    logger.info(f":: text2imgapi :: {(hdd.free // (2 ** 30))}GiB of free space")
+
+                s3 = boto3.client('s3', aws_access_key_id="AKIAVTHC7LW5M56AJ5FV",
+                                  aws_secret_access_key="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")
+                logger.info(f":: text2imgapi :: Downloading from {model_id}/{model_id}.safetensors")
+                s3.download_file(
+                    Bucket='stable-diffusion-trainings',
+                    Key=f"{model_id}/{model_id}.safetensors",
+                    Filename=model_location
+                )
+                # Refresh after loaded
+                shared.refresh_checkpoints()
+
             with closing(StableDiffusionProcessingTxt2Img(sd_model=shared.sd_model, **args)) as p:
                 p.scripts = script_runner
                 p.outpath_grids = opts.outdir_txt2img_grids
@@ -472,7 +435,42 @@ class Api:
         send_images = args.pop('send_images', True)
         args.pop('save_images', None)
 
+        model_id = args['override_settings']['sd_model_checkpoint'].split('.')[0]
+
         with self.queue_lock:
+            self.timer.cancel()
+            self.timer = th.Timer(60.0 * 60, terminate)
+            self.timer.start()
+
+            # Load model
+            cwd = os.getcwd()
+            model_location = f"models/Stable-diffusion/{model_id}.safetensors"
+            logger.info(f":: img2imgapi :: Trying to get {cwd}/{model_location}")
+            if not os.path.exists(f"{cwd}/{model_location}"):
+                hdd = psutil.disk_usage(os.getcwd())
+                logger.info(f":: img2imgapi :: No file, {(hdd.free // (2 ** 30))}GiB of free space")
+                while (hdd.free // (2 ** 30)) < 10:
+                    files = os.listdir(f"{cwd}/models/Stable-diffusion/")
+                    # files = filter(lambda x: x.endswith(".safetensors"), files)
+                    abs_files = [f"{cwd}/models/Stable-diffusion/{x}" for x in files]
+                    oldest_file = min(abs_files, key=os.path.getctime)
+                    logger.info(f":: img2imgapi :: Cleaning memory, deleting {os.path.abspath(oldest_file)}")
+                    os.remove(os.path.abspath(oldest_file))
+                    time.sleep(1)
+                    hdd = psutil.disk_usage(os.getcwd())
+                    logger.info(f":: img2imgapi :: {(hdd.free // (2 ** 30))}GiB of free space")
+
+                s3 = boto3.client('s3', aws_access_key_id="AKIAVTHC7LW5M56AJ5FV",
+                                  aws_secret_access_key="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")
+                logger.info(f":: img2imgapi :: Downloading from {model_id}/{model_id}.safetensors")
+                s3.download_file(
+                    Bucket='stable-diffusion-trainings',
+                    Key=f"{model_id}/{model_id}.safetensors",
+                    Filename=model_location
+                )
+                # Refresh after loaded
+                shared.refresh_checkpoints()
+
             with closing(StableDiffusionProcessingImg2Img(sd_model=shared.sd_model, **args)) as p:
                 p.init_images = [decode_base64_to_image(x) for x in init_images]
                 p.scripts = script_runner
