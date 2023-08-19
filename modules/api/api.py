@@ -228,7 +228,10 @@ class Api:
         self.default_script_arg_img2img = []
 
         self.timer = th.Timer(60.0 * 60, terminate)
-        self.timer.start()
+        training_uid = os.environ.get("TRAINING_UID", None)
+        training_sex_param = os.environ.get("TRAINING_SEX_PARAM", None)
+        if not (training_uid and training_sex_param):
+            self.timer.start()
 
     def add_api_route(self, path: str, endpoint, **kwargs):
         if shared.cmd_opts.api_auth:

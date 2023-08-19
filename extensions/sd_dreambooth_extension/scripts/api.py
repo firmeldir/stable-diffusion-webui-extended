@@ -42,6 +42,29 @@ if os.environ.get("DEBUG_API", False):
 
 logger = logging.getLogger(__name__)
 
+def calc_time_left(progress):
+    import time
+    if progress == 0:
+        return ""
+    else:
+        if shared.status.time_start is None:
+            time_since_start = 0
+        else:
+            time_since_start = time.time() - shared.status.time_start
+        eta = time_since_start / progress
+        eta_relative = eta - time_since_start
+
+        if eta_relative > 86400:
+            days = eta_relative // 86400
+            remainder = days * 86400
+            eta_relative -= remainder
+            return f"{days}:{time.strftime('%H:%M:%S', time.gmtime(eta_relative))}"
+        if eta_relative > 3600:
+            return time.strftime("%H:%M:%S", time.gmtime(eta_relative))
+        elif eta_relative > 60:
+            return time.strftime("%M:%S", time.gmtime(eta_relative))
+        else:
+            return time.strftime("%Ss", time.gmtime(eta_relative))
 
 class InstanceData(BaseModel):
     data: str = Field(title="File data", description="Base64 representation of the file or URL")
@@ -684,7 +707,18 @@ def dreambooth_api(_, app: FastAPI):
         key_check = check_api_key(api_key)
         if key_check is not None:
             return key_check
-        return JSONResponse(content={"current_state": f"{json.dumps(shared.status.dict())}"})
+
+        if shared.training_status == "TRAINING":
+            progress = 0
+
+            if shared.status.job_count > 0:
+                progress += shared.status.job_no / shared.status.job_count
+
+            time_left = calc_time_left(progress)
+
+            return JSONResponse(content={"status": shared.training_status, "progress": str(int(progress * 100)) + "%", "eta": time_left})
+        else:
+            return JSONResponse(content={"status": shared.training_status})
 
     @app.get("/dreambooth/status_images")
     async def check_status_images(

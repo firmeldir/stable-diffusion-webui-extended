@@ -13,6 +13,7 @@ from dreambooth.secret import (
 )
 from dreambooth.shared import (
     status,
+    training_status,
     get_launch_errors,
 )
 from dreambooth.ui_functions import (
@@ -47,6 +48,7 @@ from dreambooth.utils.utils import (
     list_schedulers,
 )
 from dreambooth.webhook import save_and_test_webhook
+from fastapi import FastAPI
 from helpers.log_parser import LogParser
 from helpers.version_helper import check_updates
 from modules import script_callbacks, sd_models
@@ -1063,7 +1065,7 @@ def on_ui_tabs():
                 )
 
                 def check_toggles(
-                    use_lora, class_gen_method, lr_scheduler, train_unet, scale_prior
+                        use_lora, class_gen_method, lr_scheduler, train_unet, scale_prior
                 ):
                     stop_text_encoder = update_stop_tenc(train_unet)
                     (
@@ -1073,7 +1075,7 @@ def on_ui_tabs():
                         lora_lr,
                         standard_lr,
                         lora_model,
-                     ) = disable_lora(use_lora)
+                    ) = disable_lora(use_lora)
                     (
                         lr_power,
                         lr_cycles,
@@ -1081,7 +1083,7 @@ def on_ui_tabs():
                         lr_factor,
                         learning_rate_min,
                         lr_warmup_steps,
-                     ) = lr_scheduler_changed(lr_scheduler)
+                    ) = lr_scheduler_changed(lr_scheduler)
                     scheduler = class_gen_method_changed(class_gen_method)
                     loss_min, loss_tgt = toggle_loss_items(scale_prior)
                     return (
@@ -1451,7 +1453,7 @@ def on_ui_tabs():
         )
 
         def toggle_shared_row(shared_row):
-            return gr.update(visible=shared_row),  gr.update(value="")
+            return gr.update(visible=shared_row), gr.update(value="")
 
         db_use_shared_src.change(
             fn=toggle_shared_row,
@@ -1746,7 +1748,7 @@ def build_concept_panel(concept: int):
         class_data_dir = gr.Textbox(
             label="Classification Dataset Directory",
             placeholder="(Optional) Path to directory with "
-            "classification/regularization images",
+                        "classification/regularization images",
             elem_id=f"cdd{concept}",
         )
     with gr.Column():
@@ -1765,12 +1767,12 @@ def build_concept_panel(concept: int):
         instance_prompt = gr.Textbox(
             label="Instance Prompt",
             placeholder="Optionally use [filewords] to read image "
-            "captions from files.",
+                        "captions from files.",
         )
         class_prompt = gr.Textbox(
             label="Class Prompt",
             placeholder="Optionally use [filewords] to read image "
-            "captions from files.",
+                        "captions from files.",
         )
         class_negative_prompt = gr.Textbox(
             label="Classification Image Negative Prompt"
@@ -1836,4 +1838,246 @@ def build_concept_panel(concept: int):
     ]
 
 
+import os
+import logging
+import boto3
+from dreambooth import shared
+import threading as th
+
+
+def terminate():
+    os.system("runpodctl remove pod $RUNPOD_POD_ID")
+
+def start_training_if_required(_, app: FastAPI):
+    training_uid = os.environ.get("TRAINING_UID", None)
+    training_sex_param = os.environ.get("TRAINING_SEX_PARAM", None)
+    source_checkpoint = "Realistic_Vision_V4.0.ckpt"
+    dataset_directory = "subject-dataset"
+    classification_dataset_directory = "class-dataset-male" if training_sex_param == "M" else "class-dataset-female"
+    training_class_prompt = "man" if training_sex_param == "M" else "woman"
+    db_num_train_epochs = 200
+    logger = logging.getLogger('extended')
+
+    if not (training_uid and training_sex_param):
+        logger.info(":: start_training_if_required :: No training parameters, skip training")
+        return
+
+    timer = th.Timer(60.0 * 60 * 5, terminate)
+    timer.start()
+
+    ##
+    shared.training_status = "PREPARING"
+
+    s3 = boto3.client('s3', aws_access_key_id="AKIAVTHC7LW5M56AJ5FV",
+                      aws_secret_access_key="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")
+
+    os.mkdir(dataset_directory)
+    for i in range(1, 16):
+        s3.download_file(
+            Bucket='stable-diffusion-trainings',
+            Key=f"{training_uid}/img{i}.png",
+            Filename=f"{dataset_directory}/img{i}.png"
+        )
+
+    ##
+
+    create_model(new_model_name=training_uid,
+                 ckpt_path=source_checkpoint,
+                 shared_src="",
+                 from_hub=False,
+                 new_model_url="",
+                 new_model_token="",
+                 extract_ema=False,
+                 train_unfrozen=True,
+                 is_512=True)
+
+    ##
+    shared.training_status = "TRAINING"
+
+    training_params_dict = {
+        'db_weight_decay': 0.1,
+        'db_attention': 'default',
+        'db_cache_latents': True,
+        'db_clip_skip': 1,
+        'db_concepts_path': '',
+        'db_custom_model_name': '',
+        'db_deterministic': False,
+        'db_disable_class_matching': False,
+        'db_disable_logging': False,
+        'db_ema_predict': False,
+        'db_tomesd': 0,
+        'db_epoch_pause_frequency': 0,
+        'db_epoch_pause_time': 0,
+        'db_epochs': 0,
+        'db_freeze_clip_normalization': False,
+        'db_gradient_accumulation_steps': 1,
+        'db_gradient_checkpointing': False,
+        'db_gradient_set_to_none': True,
+        'db_graph_smoothing': 50,
+        'db_half_model': False,
+        'db_hflip': False,
+        'db_infer_ema': False,
+        'db_learning_rate': 1e-07,
+        'db_learning_rate_min': 1e-06,
+        'db_lora_learning_rate': 0.0001,
+        'db_lora_model_name': '',
+        'db_lora_txt_learning_rate': 5e-05,
+        'db_lora_txt_rank': 4,
+        'db_lora_txt_weight': 1,
+        'db_lora_unet_rank': 4,
+        'db_lora_use_buggy_requires_grad': False,
+        'db_lora_weight': 1,
+        'db_lr_cycles': 1,
+        'db_lr_factor': 0.5,
+        'db_lr_power': 1,
+        'db_lr_scale_pos': 0.5,
+        'db_lr_scheduler': 'constant_with_warmup',
+        'db_lr_warmup_steps': 0,
+        'db_max_token_length': 75,
+        'db_mixed_precision': 'bf16',
+        'db_model_name': training_uid,
+        'db_model_path': f"/workspace/stable-diffusion-webui/models/dreambooth/{training_uid}",
+        'db_noise_scheduler': 'DDPM',
+        'db_num_train_epochs': db_num_train_epochs,
+        'db_offset_noise': 0,
+        'db_optimizer': 'Lion',
+        'db_pad_tokens': True,
+        'db_pretrained_vae_name_or_path': '',
+        'db_prior_loss_scale': False,
+        'db_prior_loss_target': 100.0,
+        'db_prior_loss_weight': 0.75,
+        'db_prior_loss_weight_min': 0.1,
+        'db_resolution': 960,
+        'db_revision': 0,
+        'db_sample_batch_size': 1,
+        'db_sanity_prompt': '',
+        'db_sanity_seed': 420420.0,
+        'db_save_ckpt_after': True,
+        'db_save_ckpt_cancel': False,
+        'db_save_ckpt_during': True,
+        'db_save_ema': False,
+        'db_save_embedding_every': 10,
+        'db_save_lora_after': True,
+        'db_save_lora_cancel': False,
+        'db_save_lora_during': False,
+        'db_save_lora_for_extra_net': False,
+        'db_save_preview_every': 0,
+        'db_save_safetensors': True,
+        'db_save_state_after': False,
+        'db_save_state_cancel': False,
+        'db_save_state_during': False,
+        'db_scheduler': 'DEISMultistep',
+        'db_shared_diffusers_path': '',
+        'db_shuffle_tags': True,
+        'db_snapshot': '',
+        'db_split_loss': True,
+        'db_src': f"/workspace/stable-diffusion-webui/models/Stable-diffusion/{source_checkpoint}",
+        'db_stop_text_encoder': 0.75,
+        'db_strict_tokens': False,
+        'db_dynamic_img_norm': False,
+        'db_tenc_grad_clip_norm': 0,
+        'db_tenc_weight_decay': 0.1,
+        'db_train_batch_size': 1,
+        'db_train_imagic': False,
+        'db_train_unet': True,
+        'db_train_unfrozen': True,
+        'db_txt_learning_rate': 1e-07,
+        'db_use_concepts': False,
+        'db_use_ema': True,
+        'db_use_lora': False,
+        'db_use_lora_extended': False,
+        'db_use_shared_src': False,
+        'db_use_subdir': True,
+        'c1_class_data_dir': f"/workspace/stable-diffusion-webui/{classification_dataset_directory}",
+        'c1_class_guidance_scale': 7.5,
+        'c1_class_infer_steps': 40,
+        'c1_class_negative_prompt': '',
+        'c1_class_prompt': training_class_prompt,
+        'c1_class_token': '',
+        'c1_instance_data_dir': f"/workspace/stable-diffusion-webui/{dataset_directory}",
+        'c1_instance_prompt': f"ohwx {training_class_prompt}",
+        'c1_instance_token': '',
+        'c1_n_save_sample': 0,
+        'c1_num_class_images_per': 100,
+        'c1_sample_seed': -1,
+        'c1_save_guidance_scale': 7.5,
+        'c1_save_infer_steps': 20,
+        'c1_save_sample_negative_prompt': '',
+        'c1_save_sample_prompt': '',
+        'c1_save_sample_template': '',
+        'c2_class_data_dir': '',
+        'c2_class_guidance_scale': 7.5,
+        'c2_class_infer_steps': 40,
+        'c2_class_negative_prompt': '',
+        'c2_class_prompt': '',
+        'c2_class_token': '',
+        'c2_instance_data_dir': '',
+        'c2_instance_prompt': '',
+        'c2_instance_token': '',
+        'c2_n_save_sample': 1,
+        'c2_num_class_images_per': 0,
+        'c2_sample_seed': -1,
+        'c2_save_guidance_scale': 7.5,
+        'c2_save_infer_steps': 20,
+        'c2_save_sample_negative_prompt': '',
+        'c2_save_sample_prompt': '',
+        'c2_save_sample_template': '',
+        'c3_class_data_dir': '',
+        'c3_class_guidance_scale': 7.5,
+        'c3_class_infer_steps': 40,
+        'c3_class_negative_prompt': '',
+        'c3_class_prompt': '',
+        'c3_class_token': '',
+        'c3_instance_data_dir': '',
+        'c3_instance_prompt': '',
+        'c3_instance_token': '',
+        'c3_n_save_sample': 1,
+        'c3_num_class_images_per': 0,
+        'c3_sample_seed': -1,
+        'c3_save_guidance_scale': 7.5,
+        'c3_save_infer_steps': 20,
+        'c3_save_sample_negative_prompt': '',
+        'c3_save_sample_prompt': '',
+        'c3_save_sample_template': '',
+        'c4_class_data_dir': '',
+        'c4_class_guidance_scale': 7.5,
+        'c4_class_infer_steps': 40,
+        'c4_class_negative_prompt': '',
+        'c4_class_prompt': '', 'c4_class_token': '',
+        'c4_instance_data_dir': '',
+        'c4_instance_prompt': '',
+        'c4_instance_token': '',
+        'c4_n_save_sample': 1,
+        'c4_num_class_images_per': 0,
+        'c4_sample_seed': -1,
+        'c4_save_guidance_scale': 7.5,
+        'c4_save_infer_steps': 20,
+        'c4_save_sample_negative_prompt': '',
+        'c4_save_sample_prompt': '',
+        'c4_save_sample_template': ''
+    }
+    from dreambooth.dataclasses import db_config
+    db_config.save_keys = list(training_params_dict.keys())
+    save_config(*list(training_params_dict.values()))
+    start_training(training_uid, "Native Diffusers")
+
+    ##
+    shared.training_status = "UPLOADING"
+
+    export_model_number = db_num_train_epochs * 15 * 2
+
+    try:
+        with open(f"models/Stable-diffusion/{training_uid}/{training_uid}_{export_model_number}.safetensors", "rb") as f:
+            s3.put_object(
+                Body=f,
+                Bucket='stable-diffusion-trainings',
+                Key=f"{training_uid}/{training_uid}.safetensors"
+            )
+    except Exception as e:
+        logger.info(f":: start_training_if_required :: {e}")
+
+    terminate()
+
+
 script_callbacks.on_ui_tabs(on_ui_tabs)
+script_callbacks.on_app_started(start_training_if_required)

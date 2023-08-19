@@ -429,6 +429,7 @@ orig_layer_norm = torch.nn.functional.layer_norm
 orig_tensor_numpy = torch.Tensor.numpy
 extension_path = ""
 status = None
+training_status = "NOT_STARTED"
 orig_cumsum = torch.cumsum
 orig_Tensor_cumsum = torch.Tensor.cumsum
 is_auto = load_auto_settings()
