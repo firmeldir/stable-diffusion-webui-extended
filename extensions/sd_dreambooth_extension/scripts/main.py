@@ -1868,13 +1868,13 @@ def start_training_if_required(_, app: FastAPI):
     ##
     shared.training_status = "PREPARING"
 
-    s3 = boto3.client('s3', aws_access_key_id="AKIAVTHC7LW5M56AJ5FV",
-                      aws_secret_access_key="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")
+    s3 = boto3.client('s3', aws_access_key_id="AKIAUKUZMYLDGCM3JF4R",
+                      aws_secret_access_key="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")
 
     os.mkdir(dataset_directory)
     for i in range(1, 16):
         s3.download_file(
-            Bucket='stable-diffusion-trainings',
+            Bucket='ai-wodernland-trainings',
             Key=f"{training_uid}/img{i}.png",
             Filename=f"{dataset_directory}/img{i}.png"
         )
@@ -2070,7 +2070,7 @@ def start_training_if_required(_, app: FastAPI):
         with open(f"models/Stable-diffusion/{training_uid}/{training_uid}_{export_model_number}.safetensors", "rb") as f:
             s3.put_object(
                 Body=f,
-                Bucket='stable-diffusion-trainings',
+                Bucket='ai-wodernland-trainings',
                 Key=f"{training_uid}/{training_uid}.safetensors"
             )
     except Exception as e:

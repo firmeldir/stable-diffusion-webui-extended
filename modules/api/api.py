@@ -370,11 +370,11 @@ class Api:
                     hdd = psutil.disk_usage(os.getcwd())
                     logger.info(f":: text2imgapi :: {(hdd.free // (2 ** 30))}GiB of free space")
 
-                s3 = boto3.client('s3', aws_access_key_id="AKIAVTHC7LW5M56AJ5FV",
-                                  aws_secret_access_key="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")
+                s3 = boto3.client('s3', aws_access_key_id="AKIAUKUZMYLDGCM3JF4R",
+                                  aws_secret_access_key="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")
                 logger.info(f":: text2imgapi :: Downloading from {model_id}/{model_id}.safetensors")
                 s3.download_file(
-                    Bucket='stable-diffusion-trainings',
+                    Bucket='ai-wodernland-trainings',
                     Key=f"{model_id}/{model_id}.safetensors",
                     Filename=model_location
                 )
@@ -463,11 +463,11 @@ class Api:
                     hdd = psutil.disk_usage(os.getcwd())
                     logger.info(f":: img2imgapi :: {(hdd.free // (2 ** 30))}GiB of free space")
 
-                s3 = boto3.client('s3', aws_access_key_id="AKIAVTHC7LW5M56AJ5FV",
-                                  aws_secret_access_key="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")
+                s3 = boto3.client('s3', aws_access_key_id="AKIAUKUZMYLDGCM3JF4R",
+                                  aws_secret_access_key="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")
                 logger.info(f":: img2imgapi :: Downloading from {model_id}/{model_id}.safetensors")
                 s3.download_file(
-                    Bucket='stable-diffusion-trainings',
+                    Bucket='ai-wodernland-trainings',
                     Key=f"{model_id}/{model_id}.safetensors",
                     Filename=model_location
                 )
